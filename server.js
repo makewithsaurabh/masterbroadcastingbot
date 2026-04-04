@@ -245,8 +245,15 @@ app.post("/broadcast", async (req, res) => {
     console.log(`🏁 [ID:${bId}] Broadcast completed. S:${totalSuccess} F:${totalFailed}`);
 
   } catch (err) {
-    console.error("Engine Crash:", err.message);
-    if (!res.headersSent) res.status(500).json({ error: err.message });
+    console.error(`❌ [ID:${bId}] Critical Error during broadcast:`, err.message);
+    
+    // Safety Switch: Ensure the dashboard doesn't stay 'RUNNING' forever
+    try {
+        await workerApi.patch(`/api/broadcasts/${bId}/finish`);
+        await notifyBot(admin_id, status_msg_id, `❌ **Broadcast Terminated with Error:**\n${err.message}`);
+    } catch (e) {}
+
+    res.status(500).json({ error: "Major broadcast failure" });
   } finally {
     isBroadcasting = false; // Always release lock
   }
