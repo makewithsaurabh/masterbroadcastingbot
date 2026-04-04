@@ -202,7 +202,15 @@ app.post("/broadcast", async (req, res) => {
     let totalFailed = 0;
     
     let nextUsersPromise = fetchUsers(page);
+    // 🟢 IMMEDIATE FEEDBACK
+    // Send 0% Progress as soon as it starts to avoid delay
+    await notifyBot(admin_id, status_msg_id, 
+        `🚀 **Broadcast [ID:${bId}] Initializing...**\n` +
+        `🔄 Progress: \`0 / ${bTotal}\` (\`0%\`)\n` +
+        `✅ Sent: \`0\` | ❌ Failed: \`0\``
+    );
 
+    // Loop through users in batches
     while (true) {
         const users = await nextUsersPromise;
         if (!users || !users.length) break;
