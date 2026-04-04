@@ -34,6 +34,21 @@ async function checkRateLimit() {
   }
 }
 
+// 🔔 NOTIFY BOT IN REAL-TIME
+async function notifyBot(chat_id, message_id, text) {
+    if (!chat_id || !message_id) return;
+    try {
+        await axios.post(`${TELEGRAM_API}/editMessageText`, {
+            chat_id,
+            message_id,
+            text,
+            parse_mode: "Markdown"
+        });
+    } catch (e) {
+        console.error("Bot Notification Failed:", e.message);
+    }
+}
+
 // Helper for Worker API
 const workerApi = axios.create({
   baseURL: WORKER_URL,
@@ -158,6 +173,8 @@ app.post("/broadcast", async (req, res) => {
   const message_id = parseInt(req.body.message_id);
   const from_chat_id = parseInt(req.body.from_chat_id);
   const existingId = req.body.broadcast_id ? parseInt(req.body.broadcast_id) : null;
+  const status_msg_id = req.body.status_msg_id ? parseInt(req.body.status_msg_id) : null;
+  const admin_id = req.body.admin_id ? parseInt(req.body.admin_id) : null;
 
   if (!existingId && (isNaN(message_id) || isNaN(from_chat_id))) {
     return res.status(400).json({ error: "message_id and from_chat_id must be integers" });
@@ -196,11 +213,27 @@ app.post("/broadcast", async (req, res) => {
         const result = await processBatch(users, bId, from_chat_id || existingId, message_id);
         totalSuccess += result.success;
         totalFailed += result.failed;
+        
+        // Periodic Bot Feedback (Every ~25-100 users)
+        const progressPercent = Math.round(((totalSuccess + totalFailed) / bTotal) * 100);
+        await notifyBot(admin_id, status_msg_id, 
+            `🚀 **Broadcast [ID:${bId}] In Progress**\n\n` +
+            `🔄 Progress: \`${totalSuccess + totalFailed} / ${bTotal}\` (\`${progressPercent}%\`)\n` +
+            `✅ Sent: \`${totalSuccess}\` | ❌ Failed: \`${totalFailed}\``
+        );
 
         console.log(`📊 [ID:${bId}] Progress: ${totalSuccess + totalFailed}/${bTotal} (S:${totalSuccess} F:${totalFailed})`);
     }
 
     await workerApi.patch(`/api/broadcasts/${bId}/finish`);
+    
+    // Final Bot Summary
+    await notifyBot(admin_id, status_msg_id, 
+        `🏁 **Broadcast [ID:${bId}] Completed!**\n\n` +
+        `✅ Successfully Sent: \`${totalSuccess}\`\n` +
+        `❌ Failures/Blocked: \`${totalFailed}\` (Handled)\n\n` +
+        `📈 Total Audience: \`${bTotal}\``
+    );
     console.log(`🏁 [ID:${bId}] Broadcast completed. S:${totalSuccess} F:${totalFailed}`);
 
   } catch (err) {
