@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Broadcast Analytics Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: #1e293b;
+            --primary: #38bdf8;
+            --secondary: #818cf8;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            padding: 2rem;
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 3rem;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        header p {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 3rem;
+        }
+
+        .stat-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stat-card h3 {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 1rem;
+        }
+
+        .stat-card .value {
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+
+        .stat-card.primary .value { color: var(--primary); }
+        .stat-card.success .value { color: var(--success); }
+        .stat-card.danger .value { color: var(--danger); }
+
+        .active-broadcasts {
+            margin-bottom: 3rem;
+        }
+
+        .active-broadcasts h2 {
+            margin-bottom: 1.5rem;
+            font-size: 1.8rem;
+        }
+
+        .progress-container {
+            background: var(--card);
+            border: 1px solid var(--border);
+            padding: 2rem;
+            border-radius: 1rem;
+            margin-bottom: 1rem;
+            display: grid;
+            grid-template-columns: 1fr 200px;
+            gap: 2rem;
+        }
+
+        .preview-box {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 0.5rem;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid var(--border);
+        }
+
+        .preview-img {
+            width: 100%;
+            height: 120px;
+            object-fit: cover;
+        }
+
+        .preview-text {
+            padding: 0.75rem;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            max-height: 80px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .progress-bar-bg {
+            height: 12px;
+            background: var(--border);
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            width: 0%;
+            transition: width 0.5s ease-out;
+        }
+
+        .progress-stats {
+            display: flex;
+            gap: 2rem;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        .progress-stats strong {
+            color: var(--text);
+        }
+
+        .history-section h2 {
+            margin-bottom: 1.5rem;
+            font-size: 1.8rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card);
+            border-radius: 1rem;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        th, td {
+            padding: 1.25rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        tr:last-child td { border-bottom: none; }
+
+        .badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-running { background: rgba(56, 189, 248, 0.2); color: var(--primary); }
+        .badge-completed { background: rgba(34, 197, 94, 0.2); color: var(--success); }
+        .badge-pending { background: rgba(248, 250, 252, 0.1); color: var(--text-muted); }
+
+        .preview-mini {
+            width: 40px;
+            height: 40px;
+            border-radius: 4px;
+            background: #000;
+            margin-right: 1rem;
+            display: inline-block;
+            vertical-align: middle;
+            object-fit: cover;
+        }
+
+        .refresh-tag {
+            text-align: center;
+            margin-top: 2rem;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+
+        @media (max-width: 768px) {
+            body { padding: 1rem; }
+            .progress-container { grid-template-columns: 1fr; }
+            .preview-box { order: -1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Broadcast Analytics</h1>
+            <p>Real-time delivery tracking & historical insights</p>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card primary">
+                <h3>Total Users</h3>
+                <div id="totalUsers" class="value">...</div>
+            </div>
+            <div class="stat-card success">
+                <h3>Total Sent</h3>
+                <div id="totalSent" class="value">...</div>
+            </div>
+            <div class="stat-card danger">
+                <h3>Total Failed</h3>
+                <div id="totalFailed" class="value">...</div>
+            </div>
+        </div>
+
+        <div id="activeContainer" class="active-broadcasts" style="display: none;">
+            <h2>Live Progress</h2>
+            <div id="activeList"></div>
+        </div>
+
+        <div class="history-section">
+            <h2>Campaign History</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Campaign</th>
+                        <th>Content</th>
+                        <th>Target</th>
+                        <th>Sent</th>
+                        <th>Failed</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="historyList">
+                    <tr><td colspan="6" style="text-align:center">Loading campaigns...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p class="refresh-tag">Auto-refreshing every 5 seconds • Last updated: <span id="lastUpdate">Never</span></p>
+    </div>
+
+    <script>
+        // XSS-safe HTML escaper — ALWAYS use this for user-provided content
+        const escHtml = (str) => String(str || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+
+        async function fetchStats() {
+            try {
+                const response = await fetch('/api/dashboard/stats');
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                renderDashboard(data);
+                document.getElementById('lastUpdate').style.color = '';
+            } catch (error) {
+                console.error('Failed to fetch dashboard stats:', error);
+                document.getElementById('lastUpdate').textContent = '⚠️ Connection lost. Retrying in 5s...';
+                document.getElementById('lastUpdate').style.color = '#ef4444';
+            }
+        }
+
+        function renderDashboard(data) {
+            const { broadcasts, total_users } = data;
+            
+            // Render Stats Cards
+            document.getElementById('totalUsers').textContent = total_users.toLocaleString();
+            
+            let totalSentCount = 0;
+            let totalFailedCount = 0;
+            let activeCount = 0;
+
+            const historyList = document.getElementById('historyList');
+            historyList.innerHTML = '';
+
+            const activeList = document.getElementById('activeList');
+            activeList.innerHTML = '';
+
+            broadcasts.forEach(b => {
+                totalSentCount += (b.sent || 0);
+                totalFailedCount += (b.failed || 0);
+
+                if (b.status === 'running') {
+                    activeCount++;
+                    renderActive(b, activeList);
+                }
+
+                // Skip 'pending' (not started) entries from history table
+                if (b.status === 'pending') return;
+
+                const tr = document.createElement('tr');
+                const date = new Date(b.created_at).toLocaleString();
+                
+                let previewHtml = '';
+                if (b.file_id) {
+                    previewHtml = `<img src="/api/media/${b.file_id}" class="preview-mini" title="${escHtml(b.caption)}" loading="lazy" onerror="this.style.display='none'">`;
+                }
+
+                const successRate = b.total_users > 0 ? Math.round((b.sent / b.total_users) * 100) : 0;
+                
+                tr.innerHTML = `
+                    <td>
+                        <div style="font-weight: 600">#${b.id}</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted)">${date}</div>
+                    </td>
+                    <td>
+                        ${previewHtml}
+                        <span style="font-size: 0.85rem">${escHtml(b.text_content || b.caption || '(Media)')}</span>
+                    </td>
+                    <td>${b.total_users}</td>
+                    <td style="color: var(--success)">${b.sent}</td>
+                    <td style="color: var(--danger)">${b.failed}</td>
+                    <td><span class="badge badge-${b.status}">${b.status}</span></td>
+                `;
+                historyList.appendChild(tr);
+            });
+
+            document.getElementById('totalSent').textContent = totalSentCount.toLocaleString();
+            document.getElementById('totalFailed').textContent = totalFailedCount.toLocaleString();
+            
+            document.getElementById('activeContainer').style.display = activeCount > 0 ? 'block' : 'none';
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+        }
+
+        function renderActive(b, container) {
+            const progress = Math.round(((b.sent + b.failed) / b.total_users) * 100) || 0;
+            const div = document.createElement('div');
+            div.className = 'progress-container';
+            
+            let previewHtml = '';
+            if (b.file_id) {
+                previewHtml = `<img src="/api/media/${b.file_id}" class="preview-img" loading="lazy" onerror="this.style.display='none'">`;
+            }
+
+            div.innerHTML = `
+                <div class="progress-info">
+                    <div class="progress-header">
+                        <strong>Broadcast #${b.id} (${b.content_type})</strong>
+                        <span style="color: var(--primary)">${progress}%</span>
+                    </div>
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar-fill" style="width: ${progress}%"></div>
+                    </div>
+                    <div class="progress-stats">
+                        <span>Sent: <strong>${b.sent}</strong></span>
+                        <span>Failed: <strong style="color: var(--danger)">${b.failed}</strong></span>
+                        <span>Target: <strong>${b.total_users}</strong></span>
+                    </div>
+                </div>
+                <div class="preview-box">
+                    ${previewHtml}
+                    <div class="preview-text">${escHtml(b.text_content || b.caption || '(No text)')}</div>
+                </div>
+            `;
+            container.appendChild(div);
+        }
+
+        // Initialize & Poll
+        fetchStats();
+        setInterval(fetchStats, 5000);
+    </script>
+</body>
+</html>
