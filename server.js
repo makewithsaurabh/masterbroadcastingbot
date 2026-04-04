@@ -67,7 +67,15 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
   } catch (e) {
     const description = e.response?.data?.description || e.message;
     const isRateLimited = e.response?.status === 429;
-    const isBlocked = description.toLowerCase().includes("blocked");
+    
+    // Comprehensive "Dead User" detection
+    const deadUserDescriptions = [
+        "blocked", 
+        "chat not found", 
+        "can't initiate conversation", 
+        "user is deactivated"
+    ];
+    const isDeadUser = deadUserDescriptions.some(desc => description.toLowerCase().includes(desc));
 
     if (isRateLimited) {
       const waitTime = (e.response.data.parameters?.retry_after || 5) * 1000;
@@ -79,9 +87,9 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
       return { status: "failed", error: "Rate limited too many times" };
     }
 
-    if (isBlocked) {
-      workerApi.post("/api/users/block", { user_id: chat_id, reason: "Blocked during broadcast" }).catch(() => {});
-      return { status: "failed", error: "Blocked by user" };
+    if (isDeadUser) {
+      workerApi.post("/api/users/block", { user_id: chat_id, reason: `Dead user: ${description}` }).catch(() => {});
+      return { status: "failed", error: "Blocked/Dead User" };
     }
 
     if (attempt === 1) {
