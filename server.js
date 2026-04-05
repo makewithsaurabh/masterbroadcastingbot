@@ -17,9 +17,9 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "YOUR_ADMIN_API_KEY";
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 // STABILITY SETTINGS
-const CONCURRENCY = 20;       
-const RETRY_DELAY = 1000;     
-const UPDATE_EVERY = 25;      
+const CONCURRENCY = 20;
+const RETRY_DELAY = 1000;
+const UPDATE_EVERY = 25;
 
 // GLOBAL RATE SYNC
 let globalPauseUntil = 0;
@@ -36,17 +36,17 @@ async function checkRateLimit() {
 
 // 🔔 NOTIFY BOT IN REAL-TIME
 async function notifyBot(chat_id, message_id, text) {
-    if (!chat_id || !message_id) return;
-    try {
-        await axios.post(`${TELEGRAM_API}/editMessageText`, {
-            chat_id,
-            message_id,
-            text,
-            parse_mode: "Markdown"
-        });
-    } catch (e) {
-        console.error("Bot Notification Failed:", e.message);
-    }
+  if (!chat_id || !message_id) return;
+  try {
+    await axios.post(`${TELEGRAM_API}/editMessageText`, {
+      chat_id,
+      message_id,
+      text,
+      parse_mode: "Markdown"
+    });
+  } catch (e) {
+    console.error("Bot Notification Failed:", e.message);
+  }
 }
 
 // Helper for Worker API
@@ -71,7 +71,7 @@ async function fetchUsers(page, pageSize = 1000) {
 // 🔥 SAFE SEND WITH RETRY & 429 HANDLING
 async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
   await checkRateLimit();
-  
+
   try {
     await axios.post(`${TELEGRAM_API}/copyMessage`, {
       chat_id,
@@ -82,13 +82,13 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
   } catch (e) {
     const description = e.response?.data?.description || e.message;
     const isRateLimited = e.response?.status === 429;
-    
+
     // Comprehensive "Dead User" detection
     const deadUserDescriptions = [
-        "blocked", 
-        "chat not found", 
-        "can't initiate conversation", 
-        "user is deactivated"
+      "blocked",
+      "chat not found",
+      "can't initiate conversation",
+      "user is deactivated"
     ];
     const isDeadUser = deadUserDescriptions.some(desc => description.toLowerCase().includes(desc));
 
@@ -103,7 +103,7 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
     }
 
     if (isDeadUser) {
-      workerApi.post("/api/users/block", { user_id: chat_id, reason: `Dead user: ${description}` }).catch(() => {});
+      workerApi.post("/api/users/block", { user_id: chat_id, reason: `Dead user: ${description}` }).catch(() => { });
       return { status: "failed", error: "Blocked/Dead User" };
     }
 
@@ -131,8 +131,8 @@ async function processBatch(users, broadcastId, fromChatId, messageId) {
     batchResults = [];
     try {
       await workerApi.patch("/api/broadcast-logs/update", {
-          broadcast_id: broadcastId,
-          updates: toSend
+        broadcast_id: broadcastId,
+        updates: toSend
       });
     } catch (e) {
       console.error("Partial Sync Failed:", e.message);
@@ -141,11 +141,11 @@ async function processBatch(users, broadcastId, fromChatId, messageId) {
     }
   };
 
-  const tasks = users.map((user) => 
+  const tasks = users.map((user) =>
     concurrencyLimiter(async () => {
       const result = await safeSend(user.user_id, fromChatId, messageId);
       batchResults.push({ user_id: user.user_id, status: result.status, error: result.error });
-      
+
       if (result.status === "success") stats.success++;
       else stats.failed++;
 
@@ -179,14 +179,25 @@ app.post("/broadcast", async (req, res) => {
   if (!existingId && (isNaN(message_id) || isNaN(from_chat_id))) {
     return res.status(400).json({ error: "message_id and from_chat_id must be integers" });
   }
-  
+
   isBroadcasting = true;
   try {
     let bId, bTotal;
+    let startSuccess = 0;
+    let startFailed = 0;
+    let final_message_id = message_id;
+    let final_from_chat_id = from_chat_id;
+
     if (existingId) {
         bId = existingId;
         const progress = await workerApi.get(`/api/broadcasts/${bId}/progress`);
         bTotal = parseInt(progress.data.total_users) || 0;
+        startSuccess = parseInt(progress.data.sent_count) || 0;
+        startFailed = parseInt(progress.data.failed_count) || 0;
+        final_message_id = parseInt(progress.data.message_id);
+        final_from_chat_id = parseInt(progress.data.from_chat_id);
+        
+        console.log(`🚀 [RESUME] ID:${bId} | Starting from S:${startSuccess} F:${startFailed}`);
     } else {
         // Fallback: create from_chat_id + message_id (legacy path)
         const campaign = await workerApi.post("/api/broadcasts", { message_id, from_chat_id, active_days: 30 });
@@ -198,62 +209,64 @@ app.post("/broadcast", async (req, res) => {
     console.log(`🚀 [ID:${bId}] Engine started for ${bTotal} users.`);
 
     let page = 1;
-    let totalSuccess = 0;
-    let totalFailed = 0;
+    let totalSuccess = startSuccess;
+    let totalFailed = startFailed;
     
     let nextUsersPromise = fetchUsers(page);
     // 🟢 IMMEDIATE FEEDBACK
-    // Send 0% Progress as soon as it starts to avoid delay
+    // Send Current Progress as soon as it starts to avoid delay
+    const initialPercent = Math.round(((totalSuccess + totalFailed) / bTotal) * 100) || 0;
     await notifyBot(admin_id, status_msg_id, 
         `🚀 **Broadcast [ID:${bId}] Initializing...**\n` +
-        `🔄 Progress: \`0 / ${bTotal}\` (\`0%\`)\n` +
-        `✅ Sent: \`0\` | ❌ Failed: \`0\``
+        `🔄 Progress: \`${totalSuccess + totalFailed} / ${bTotal}\` (\`${initialPercent}%\`)\n` +
+        `✅ Sent: \`${totalSuccess}\` | ❌ Failed: \`${totalFailed}\``
     );
 
     // Loop through users in batches
     while (true) {
-        const users = await nextUsersPromise;
-        if (!users || !users.length) break;
+      const users = await nextUsersPromise;
+      if (!users || !users.length) break;
 
         page++;
         nextUsersPromise = fetchUsers(page);
 
-        const result = await processBatch(users, bId, from_chat_id || existingId, message_id);
+        const result = await processBatch(users, bId, final_from_chat_id, final_message_id);
         totalSuccess += result.success;
         totalFailed += result.failed;
-        
-        // Periodic Bot Feedback (Every ~25-100 users)
-        const progressPercent = Math.round(((totalSuccess + totalFailed) / bTotal) * 100);
-        await notifyBot(admin_id, status_msg_id, 
-            `🚀 **Broadcast [ID:${bId}] In Progress**\n\n` +
-            `🔄 Progress: \`${totalSuccess + totalFailed} / ${bTotal}\` (\`${progressPercent}%\`)\n` +
-            `✅ Sent: \`${totalSuccess}\` | ❌ Failed: \`${totalFailed}\``
-        );
 
-        console.log(`📊 [ID:${bId}] Progress: ${totalSuccess + totalFailed}/${bTotal} (S:${totalSuccess} F:${totalFailed})`);
+      // Periodic Bot Feedback (Every ~25-100 users)
+      const progressPercent = Math.round(((totalSuccess + totalFailed) / bTotal) * 100);
+      await notifyBot(admin_id, status_msg_id,
+        `🚀 **Broadcast [ID:${bId}] In Progress**\n\n` +
+        `🔄 Progress: \`${totalSuccess + totalFailed} / ${bTotal}\` (\`${progressPercent}%\`)\n` +
+        `✅ Sent: \`${totalSuccess}\` | ❌ Failed: \`${totalFailed}\``
+      );
+
+      console.log(`📊 [ID:${bId}] Progress: ${totalSuccess + totalFailed}/${bTotal} (S:${totalSuccess} F:${totalFailed})`);
     }
 
     await workerApi.patch(`/api/broadcasts/${bId}/finish`);
-    
+
     // Final Bot Summary
-    await notifyBot(admin_id, status_msg_id, 
-        `🏁 **Broadcast [ID:${bId}] Completed!**\n\n` +
-        `✅ Successfully Sent: \`${totalSuccess}\`\n` +
-        `❌ Failures/Blocked: \`${totalFailed}\` (Handled)\n\n` +
-        `📈 Total Audience: \`${bTotal}\``
+    await notifyBot(admin_id, status_msg_id,
+      `🏁 **Broadcast [ID:${bId}] Completed!**\n\n` +
+      `✅ Successfully Sent: \`${totalSuccess}\`\n` +
+      `❌ Failures/Blocked: \`${totalFailed}\` (Handled)\n\n` +
+      `📈 Total Audience: \`${bTotal}\``
     );
     console.log(`🏁 [ID:${bId}] Broadcast completed. S:${totalSuccess} F:${totalFailed}`);
 
   } catch (err) {
-    console.error(`❌ [ID:${bId}] Critical Error during broadcast:`, err.message);
-    
+    const errorMsg = err.response?.data?.error || err.message;
+    console.error(`❌ [ID:${bId}] Critical Error during broadcast:`, errorMsg);
+
     // Safety Switch: Ensure the dashboard doesn't stay 'RUNNING' forever
     try {
-        await workerApi.patch(`/api/broadcasts/${bId}/finish`);
-        await notifyBot(admin_id, status_msg_id, `❌ **Broadcast Terminated with Error:**\n${err.message}`);
-    } catch (e) {}
+      await workerApi.patch(`/api/broadcasts/${bId}/finish`);
+      await notifyBot(admin_id, status_msg_id, `❌ **Broadcast Terminated with Error:**\n${errorMsg}`);
+    } catch (e) { }
 
-    res.status(500).json({ error: "Major broadcast failure" });
+    res.status(500).json({ error: errorMsg });
   } finally {
     isBroadcasting = false; // Always release lock
   }
@@ -273,11 +286,11 @@ const mediaCache = new Map();
 
 app.get("/api/media/:file_id", async (req, res) => {
   const { file_id } = req.params;
-  
+
   try {
     if (mediaCache.size > 1000) {
-        console.log("Memory Guard: Clearing media cache.");
-        mediaCache.clear();
+      console.log("Memory Guard: Clearing media cache.");
+      mediaCache.clear();
     }
 
     let filePath = mediaCache.get(file_id);
@@ -310,8 +323,8 @@ app.get("/api/dashboard/stats", async (req, res) => {
       workerApi.get("/api/users?limit=1")
     ]);
     res.json({
-        broadcasts: broadcasts.data,
-        total_users: parseInt(users.headers['x-total-count'] || '0', 10) // Parse as integer, headers are strings
+      broadcasts: broadcasts.data,
+      total_users: parseInt(users.headers['x-total-count'] || '0', 10) // Parse as integer, headers are strings
     });
   } catch (e) {
     res.status(500).json({ error: "Dashboard down" });
