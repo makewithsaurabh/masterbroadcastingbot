@@ -118,8 +118,8 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
   }
 }
 
-// 🔥 PROCESS BATCH (Correct Chunked Updates with Flush Mutex)
-async function processBatch(users, broadcastId, fromChatId, messageId) {
+// 🔥 PROCESS BATCH (Correct Chunked Updates with Real-time Telegram Feedback)
+async function processBatch(users, broadcastId, fromChatId, messageId, bTotal, admin_id, status_msg_id, currentStats) {
   let batchResults = [];
   let stats = { success: 0, failed: 0 };
   let isFlushing = false;
@@ -136,8 +136,22 @@ async function processBatch(users, broadcastId, fromChatId, messageId) {
         broadcast_id: broadcastId,
         updates: toSend
       });
+
+      // 🔔 REAL-TIME PROGRESS UPDATE TO TELEGRAM (Every 25 users)
+      if (admin_id && status_msg_id) {
+        const s = currentStats.success + stats.success;
+        const f = currentStats.failed + stats.failed;
+        const progressPercent = Math.round(((s + f) / bTotal) * 100) || 0;
+        
+        await notifyBot(admin_id, status_msg_id,
+          `🚀 **Broadcast [ID:${broadcastId}] In Progress**\n\n` +
+          `🔄 Progress: \`${s + f} / ${bTotal}\` (\`${progressPercent}%\`)\n` +
+          `✅ Sent: \`${s}\` | ❌ Failed: \`${f}\`\n\n` +
+          `_Updating every ${UPDATE_EVERY} users..._`
+        );
+      }
     } catch (e) {
-      console.error("Partial Sync Failed:", e.message);
+      console.error("Partial Sync/Notification Failed:", e.message);
     } finally {
       isFlushing = false;
     }
@@ -232,17 +246,9 @@ app.post("/broadcast", async (req, res) => {
         page++;
         nextUsersPromise = fetchUsers(page);
 
-        const result = await processBatch(users, bId, final_from_chat_id, final_message_id);
+        const result = await processBatch(users, bId, final_from_chat_id, final_message_id, bTotal, admin_id, status_msg_id, { success: totalSuccess, failed: totalFailed });
         totalSuccess += result.success;
         totalFailed += result.failed;
-
-      // Periodic Bot Feedback (Every ~25-100 users)
-      const progressPercent = Math.round(((totalSuccess + totalFailed) / bTotal) * 100);
-      await notifyBot(admin_id, status_msg_id,
-        `🚀 **Broadcast [ID:${bId}] In Progress**\n\n` +
-        `🔄 Progress: \`${totalSuccess + totalFailed} / ${bTotal}\` (\`${progressPercent}%\`)\n` +
-        `✅ Sent: \`${totalSuccess}\` | ❌ Failed: \`${totalFailed}\``
-      );
 
       console.log(`📊 [ID:${bId}] Progress: ${totalSuccess + totalFailed}/${bTotal} (S:${totalSuccess} F:${totalFailed})`);
     }
