@@ -8,7 +8,7 @@ app.use(express.json());
 app.use(cors({ origin: false })); // Block all cross-origin requests (API-only server)
 
 // NETWORK SAFETY
-axios.defaults.timeout = 10000; // 10s global timeout
+axios.defaults.timeout = 30000; // 30s global timeout for slow Telegram responses
 
 // CONFIG
 const BOT_TOKEN = process.env.BOT_TOKEN || "YOUR_BOT_TOKEN";
@@ -17,7 +17,7 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "YOUR_ADMIN_API_KEY";
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 // STABILITY SETTINGS
-const CONCURRENCY = 20;
+const CONCURRENCY = 15;
 const RETRY_DELAY = 1000;
 const UPDATE_EVERY = 25;
 
@@ -107,9 +107,11 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
       return { status: "failed", error: "Blocked/Dead User" };
     }
 
-    if (attempt === 1) {
-      await wait(RETRY_DELAY);
-      return safeSend(chat_id, from_chat_id, message_id, 2);
+    if (attempt < 3) {
+      const delay = RETRY_DELAY * attempt;
+      console.log(`[RETRY] chat:${chat_id} | Attempt ${attempt} failed. Retrying in ${delay}ms... (Error: ${description})`);
+      await wait(delay);
+      return safeSend(chat_id, from_chat_id, message_id, attempt + 1);
     }
 
     return { status: "failed", error: description };
