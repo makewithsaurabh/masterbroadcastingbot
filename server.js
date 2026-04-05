@@ -104,7 +104,7 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
 
     if (isDeadUser) {
       workerApi.post("/api/users/block", { user_id: chat_id, reason: `Dead user: ${description}` }).catch(() => { });
-      return { status: "failed", error: "Blocked/Dead User" };
+      return { status: "failed", error: `Dead: ${description}` };
     }
 
     if (attempt < 3) {
