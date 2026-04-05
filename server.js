@@ -34,6 +34,16 @@ async function checkRateLimit() {
   }
 }
 
+// 🎨 PREMIUM SHADED PROGRESS BAR (████▒▒▒)
+function generateProgressBar(current, total) {
+  const size = 15; // Sleek and professional
+  const progress = Math.min(Math.floor((current / total) * size), size);
+  const empty = size - progress;
+  const bar = "█".repeat(progress) + "▒".repeat(empty);
+  const percentage = Math.round((current / total) * 100) || 0;
+  return `📶 \`[${bar}]\` **${percentage}%**`;
+}
+
 // 🔔 NOTIFY BOT IN REAL-TIME
 async function notifyBot(chat_id, message_id, text) {
   if (!chat_id || !message_id) return;
@@ -104,7 +114,13 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
 
     if (isDeadUser) {
       workerApi.post("/api/users/block", { user_id: chat_id, reason: `Dead user: ${description}` }).catch(() => { });
-      return { status: "failed", error: `Dead: ${description}` };
+      
+      let type = "failed";
+      if (description.toLowerCase().includes("blocked")) type = "blocked";
+      if (description.toLowerCase().includes("deactivated")) type = "deactivated";
+      if (description.toLowerCase().includes("chat not found") || description.toLowerCase().includes("initiate")) type = "not_found";
+      
+      return { status: "failed", type, error: description };
     }
 
     if (attempt < 3) {
@@ -114,14 +130,14 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
       return safeSend(chat_id, from_chat_id, message_id, attempt + 1);
     }
 
-    return { status: "failed", error: description };
+    return { status: "failed", type: "error", error: description };
   }
 }
 
-// 🔥 PROCESS BATCH (Correct Chunked Updates with Real-time Telegram Feedback)
+// 🔥 PROCESS BATCH (Categorized Updates with Premium Feedback)
 async function processBatch(users, broadcastId, fromChatId, messageId, bTotal, admin_id, status_msg_id, currentStats) {
   let batchResults = [];
-  let stats = { success: 0, failed: 0 };
+  let stats = { success: 0, failed: 0, blocked: 0, deactivated: 0, not_found: 0 };
   let isFlushing = false;
 
   const flush = async (force = false) => {
@@ -137,17 +153,24 @@ async function processBatch(users, broadcastId, fromChatId, messageId, bTotal, a
         updates: toSend
       });
 
-      // 🔔 REAL-TIME PROGRESS UPDATE TO TELEGRAM (Every 25 users)
+      // 🔔 PREMIUM REAL-TIME PROGRESS UPDATE (Dashboard Style)
       if (admin_id && status_msg_id) {
         const s = currentStats.success + stats.success;
-        const f = currentStats.failed + stats.failed;
-        const progressPercent = Math.round(((s + f) / bTotal) * 100) || 0;
+        const totalProcessed = currentStats.processed + (stats.success + stats.failed);
+        const b = currentStats.blocked + stats.blocked;
+        const d = currentStats.deactivated + stats.deactivated;
+        const n = currentStats.not_found + stats.not_found;
+        
+        const progressBar = generateProgressBar(totalProcessed, bTotal);
         
         await notifyBot(admin_id, status_msg_id,
           `🚀 **Broadcast [ID:${broadcastId}] In Progress**\n\n` +
-          `🔄 Progress: \`${s + f} / ${bTotal}\` (\`${progressPercent}%\`)\n` +
-          `✅ Sent: \`${s}\` | ❌ Failed: \`${f}\`\n\n` +
-          `_Updating every ${UPDATE_EVERY} users..._`
+          `${progressBar}\n\n` +
+          `✅ **Successful**: \`${s}\`\n` +
+          `🚫 **Blocked**: \`${b}\`\n` +
+          `🗑️ **Inactive/Deactivated**: \`${d + n}\`\n` +
+          `🏁 **Processed**: \`${totalProcessed} / ${bTotal}\`\n\n` +
+          `_Speed: 15 threads / 30s timeout active_`
         );
       }
     } catch (e) {
@@ -160,10 +183,20 @@ async function processBatch(users, broadcastId, fromChatId, messageId, bTotal, a
   const tasks = users.map((user) =>
     concurrencyLimiter(async () => {
       const result = await safeSend(user.user_id, fromChatId, messageId);
-      batchResults.push({ user_id: user.user_id, status: result.status, error: result.error });
+      batchResults.push({ 
+        user_id: user.user_id, 
+        status: result.status, 
+        type: result.type, // Sending the categorization type (blocked/deactivated/not_found)
+        error: result.error 
+      });
 
       if (result.status === "success") stats.success++;
-      else stats.failed++;
+      else {
+        stats.failed++;
+        if (result.type === "blocked") stats.blocked++;
+        else if (result.type === "deactivated") stats.deactivated++;
+        else if (result.type === "not_found") stats.not_found++;
+      }
 
       await flush();
     })
@@ -227,15 +260,17 @@ app.post("/broadcast", async (req, res) => {
     let page = 1;
     let totalSuccess = startSuccess;
     let totalFailed = startFailed;
+    let totalBlocked = 0;
+    let totalDeactivated = 0;
+    let totalNotFound = 0;
     
     let nextUsersPromise = fetchUsers(page);
     // 🟢 IMMEDIATE FEEDBACK
-    // Send Current Progress as soon as it starts to avoid delay
-    const initialPercent = Math.round(((totalSuccess + totalFailed) / bTotal) * 100) || 0;
+    const initialBar = generateProgressBar(totalSuccess + totalFailed, bTotal);
     await notifyBot(admin_id, status_msg_id, 
-        `🚀 **Broadcast [ID:${bId}] Initializing...**\n` +
-        `🔄 Progress: \`${totalSuccess + totalFailed} / ${bTotal}\` (\`${initialPercent}%\`)\n` +
-        `✅ Sent: \`${totalSuccess}\` | ❌ Failed: \`${totalFailed}\``
+        `🚀 **Broadcast [ID:${bId}] Handshake Established**\n\n` +
+        `${initialBar}\n` +
+        `✅ Initial: \`${totalSuccess}\` | ❌ Start Fail: \`${totalFailed}\``
     );
 
     // Loop through users in batches
@@ -246,21 +281,33 @@ app.post("/broadcast", async (req, res) => {
         page++;
         nextUsersPromise = fetchUsers(page);
 
-        const result = await processBatch(users, bId, final_from_chat_id, final_message_id, bTotal, admin_id, status_msg_id, { success: totalSuccess, failed: totalFailed });
+        const result = await processBatch(users, bId, final_from_chat_id, final_message_id, bTotal, admin_id, status_msg_id, { 
+            success: totalSuccess, 
+            failed: totalFailed,
+            blocked: totalBlocked,
+            deactivated: totalDeactivated,
+            not_found: totalNotFound,
+            processed: totalSuccess + totalFailed
+        });
         totalSuccess += result.success;
         totalFailed += result.failed;
+        totalBlocked += result.blocked;
+        totalDeactivated += result.deactivated;
+        totalNotFound += result.not_found;
 
       console.log(`📊 [ID:${bId}] Progress: ${totalSuccess + totalFailed}/${bTotal} (S:${totalSuccess} F:${totalFailed})`);
     }
 
     await workerApi.patch(`/api/broadcasts/${bId}/finish`);
 
-    // Final Bot Summary
+    // 🏁 FINAL DETAILED SUMMARY
     await notifyBot(admin_id, status_msg_id,
-      `🏁 **Broadcast [ID:${bId}] Completed!**\n\n` +
-      `✅ Successfully Sent: \`${totalSuccess}\`\n` +
-      `❌ Failures/Blocked: \`${totalFailed}\` (Handled)\n\n` +
-      `📈 Total Audience: \`${bTotal}\``
+      `🏁 **Broadcast [ID:${bId}] Fully Completed!**\n\n` +
+      `✅ **Successfully Sent**: \`${totalSuccess}\`\n` +
+      `🚫 **Blocked by User**: \`${totalBlocked}\`\n` +
+      `🗑️ **Deleted/Deactivated**: \`${totalDeactivated + totalNotFound}\`\n` +
+      `❌ **Total Failures**: \`${totalFailed}\` (Logged)\n\n` +
+      `📈 **Total Audience Cleaned**: \`${bTotal}\``
     );
     console.log(`🏁 [ID:${bId}] Broadcast completed. S:${totalSuccess} F:${totalFailed}`);
 
