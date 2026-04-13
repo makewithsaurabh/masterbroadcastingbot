@@ -16,10 +16,10 @@ const WORKER_URL = process.env.WORKER_URL || "https://your-worker-url";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "YOUR_ADMIN_API_KEY";
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-// STABILITY SETTINGS (COLD MODE FOR BYPASSING SOFT-BLOCKS)
-const CONCURRENCY = 2; 
-const RETRY_DELAY = 2000;
-const UPDATE_EVERY = 20;
+// STABILITY SETTINGS (OPTIMIZED FOR RENDER)
+const CONCURRENCY = 20;
+const RETRY_DELAY = 3000;
+const UPDATE_EVERY = 10;
 
 // GLOBAL RATE SYNC
 let globalPauseUntil = 0;
@@ -81,7 +81,7 @@ async function fetchUsers(page, pageSize = 1000) {
 // 🔥 SAFE SEND WITH RETRY & 429 HANDLING
 async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
   await checkRateLimit();
-  await wait(200); // Higher delay for Cold Mode test
+  await wait(30); // Balanced delay for speed & stability (~30 req/sec)
 
   try {
     await axios.post(`${TELEGRAM_API}/copyMessage`, {
@@ -110,14 +110,14 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
 
     if (isDeadUser) {
       console.log(`\x1b[31m[DEAD USER]\x1b[0m ID: ${chat_id} | Reason: ${description} | Type: ${typeof chat_id}`);
-      
+
       workerApi.post("/api/users/block", { user_id: chat_id, reason: `Dead user: ${description}` }).catch(() => { });
-      
+
       let type = "failed";
       if (description.toLowerCase().includes("blocked")) type = "blocked";
       else if (description.toLowerCase().includes("deactivated") || description.toLowerCase().includes("deleted")) type = "deactivated";
-      else type = "not_found"; 
-      
+      else type = "not_found";
+
       return { status: "failed", type, error: description };
     }
 
@@ -158,9 +158,9 @@ async function processBatch(users, broadcastId, fromChatId, messageId, bTotal, a
         const b = currentStats.blocked + stats.blocked;
         const d = currentStats.deactivated + stats.deactivated;
         const n = currentStats.not_found + stats.not_found;
-        
+
         const progressBar = generateProgressBar(totalProcessed, bTotal);
-        
+
         await notifyBot(admin_id, status_msg_id,
           `🚀 **Broadcast [ID:${broadcastId}] In Progress**\n\n` +
           `${progressBar}\n\n` +
@@ -182,11 +182,11 @@ async function processBatch(users, broadcastId, fromChatId, messageId, bTotal, a
   const tasks = users.map((user) =>
     concurrencyLimiter(async () => {
       const result = await safeSend(user.user_id, fromChatId, messageId);
-      batchResults.push({ 
-        user_id: user.user_id, 
-        status: result.status, 
+      batchResults.push({
+        user_id: user.user_id,
+        status: result.status,
         type: result.type, // Sending the categorization type (blocked/deactivated/not_found)
-        error: result.error 
+        error: result.error
       });
 
       if (result.status === "success") stats.success++;
@@ -195,7 +195,7 @@ async function processBatch(users, broadcastId, fromChatId, messageId, bTotal, a
         if (result.type === "blocked") stats.blocked++;
         else if (result.type === "deactivated") stats.deactivated++;
         else if (result.type === "not_found") stats.not_found++;
-        
+
         // Collect samples (limit to 5)
         if (stats.error_samples.length < 5) {
           stats.error_samples.push(`ID: \`${user.user_id}\` | Reason: \`${result.error}\``);
@@ -242,20 +242,20 @@ app.post("/broadcast", async (req, res) => {
     let final_from_chat_id = from_chat_id;
 
     if (existingId) {
-        bId = existingId;
-        const progress = await workerApi.get(`/api/broadcasts/${bId}/progress`);
-        bTotal = parseInt(progress.data.total_users) || 0;
-        startSuccess = parseInt(progress.data.sent_count) || 0;
-        startFailed = parseInt(progress.data.failed_count) || 0;
-        final_message_id = parseInt(progress.data.message_id);
-        final_from_chat_id = parseInt(progress.data.from_chat_id);
-        
-        console.log(`🚀 [RESUME] ID:${bId} | Starting from S:${startSuccess} F:${startFailed}`);
+      bId = existingId;
+      const progress = await workerApi.get(`/api/broadcasts/${bId}/progress`);
+      bTotal = parseInt(progress.data.total_users) || 0;
+      startSuccess = parseInt(progress.data.sent_count) || 0;
+      startFailed = parseInt(progress.data.failed_count) || 0;
+      final_message_id = parseInt(progress.data.message_id);
+      final_from_chat_id = parseInt(progress.data.from_chat_id);
+
+      console.log(`🚀 [RESUME] ID:${bId} | Starting from S:${startSuccess} F:${startFailed}`);
     } else {
-        // Fallback: create from_chat_id + message_id (legacy path)
-        const campaign = await workerApi.post("/api/broadcasts", { message_id, from_chat_id, active_days: 30 });
-        bId = campaign.data.broadcast_id;
-        bTotal = campaign.data.total_users;
+      // Fallback: create from_chat_id + message_id (legacy path)
+      const campaign = await workerApi.post("/api/broadcasts", { message_id, from_chat_id, active_days: 30 });
+      bId = campaign.data.broadcast_id;
+      bTotal = campaign.data.total_users;
     }
 
     res.json({ status: "Processing", broadcast_id: bId, total_users: bTotal });
@@ -268,14 +268,14 @@ app.post("/broadcast", async (req, res) => {
     let totalDeactivated = 0;
     let totalNotFound = 0;
     let finalErrorSamples = [];
-    
+
     let nextUsersPromise = fetchUsers(page);
     // 🟢 IMMEDIATE FEEDBACK
     const initialBar = generateProgressBar(totalSuccess + totalFailed, bTotal);
-    await notifyBot(admin_id, status_msg_id, 
-        `🚀 **Broadcast [ID:${bId}] Handshake Established**\n\n` +
-        `${initialBar}\n` +
-        `✅ Initial: \`${totalSuccess}\` | ❌ Start Fail: \`${totalFailed}\``
+    await notifyBot(admin_id, status_msg_id,
+      `🚀 **Broadcast [ID:${bId}] Handshake Established**\n\n` +
+      `${initialBar}\n` +
+      `✅ Initial: \`${totalSuccess}\` | ❌ Start Fail: \`${totalFailed}\``
     );
 
     // Loop through users in batches
@@ -283,23 +283,23 @@ app.post("/broadcast", async (req, res) => {
       const users = await nextUsersPromise;
       if (!users || !users.length) break;
 
-        page++;
-        nextUsersPromise = fetchUsers(page);
+      page++;
+      nextUsersPromise = fetchUsers(page);
 
-        const result = await processBatch(users, bId, final_from_chat_id, final_message_id, bTotal, admin_id, status_msg_id, { 
-            success: totalSuccess, 
-            failed: totalFailed,
-            blocked: totalBlocked,
-            deactivated: totalDeactivated,
-            not_found: totalNotFound,
-            processed: totalSuccess + totalFailed
-        });
-        totalSuccess += result.success;
-        totalFailed += result.failed;
-        totalBlocked += result.blocked;
-        totalDeactivated += result.deactivated;
-        totalNotFound += result.not_found;
-        if (finalErrorSamples.length < 5) finalErrorSamples.push(...result.error_samples);
+      const result = await processBatch(users, bId, final_from_chat_id, final_message_id, bTotal, admin_id, status_msg_id, {
+        success: totalSuccess,
+        failed: totalFailed,
+        blocked: totalBlocked,
+        deactivated: totalDeactivated,
+        not_found: totalNotFound,
+        processed: totalSuccess + totalFailed
+      });
+      totalSuccess += result.success;
+      totalFailed += result.failed;
+      totalBlocked += result.blocked;
+      totalDeactivated += result.deactivated;
+      totalNotFound += result.not_found;
+      if (finalErrorSamples.length < 5) finalErrorSamples.push(...result.error_samples);
 
       console.log(`📊 [ID:${bId}] Progress: ${totalSuccess + totalFailed}/${bTotal} (S:${totalSuccess} F:${totalFailed})`);
     }
