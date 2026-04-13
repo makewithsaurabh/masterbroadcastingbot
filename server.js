@@ -16,9 +16,9 @@ const WORKER_URL = process.env.WORKER_URL || "https://your-worker-url";
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "YOUR_ADMIN_API_KEY";
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-// STABILITY SETTINGS
-const CONCURRENCY = 10;
-const RETRY_DELAY = 1500;
+// STABILITY SETTINGS (COLD MODE FOR BYPASSING SOFT-BLOCKS)
+const CONCURRENCY = 2; 
+const RETRY_DELAY = 2000;
 const UPDATE_EVERY = 20;
 
 // GLOBAL RATE SYNC
@@ -81,7 +81,7 @@ async function fetchUsers(page, pageSize = 1000) {
 // 🔥 SAFE SEND WITH RETRY & 429 HANDLING
 async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
   await checkRateLimit();
-  await wait(40); // 40ms mini-delay for constant smooth flow (~25 req/sec)
+  await wait(200); // Higher delay for Cold Mode test
 
   try {
     await axios.post(`${TELEGRAM_API}/copyMessage`, {
@@ -135,7 +135,7 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
 // 🔥 PROCESS BATCH (Categorized Updates with Premium Feedback)
 async function processBatch(users, broadcastId, fromChatId, messageId, bTotal, admin_id, status_msg_id, currentStats) {
   let batchResults = [];
-  let stats = { success: 0, failed: 0, blocked: 0, deactivated: 0, not_found: 0 };
+  let stats = { success: 0, failed: 0, blocked: 0, deactivated: 0, not_found: 0, error_samples: [] };
   let isFlushing = false;
 
   const flush = async (force = false) => {
@@ -195,6 +195,11 @@ async function processBatch(users, broadcastId, fromChatId, messageId, bTotal, a
         if (result.type === "blocked") stats.blocked++;
         else if (result.type === "deactivated") stats.deactivated++;
         else if (result.type === "not_found") stats.not_found++;
+        
+        // Collect samples (limit to 5)
+        if (stats.error_samples.length < 5) {
+          stats.error_samples.push(`ID: \`${user.user_id}\` | Reason: \`${result.error}\``);
+        }
       }
 
       await flush();
@@ -262,6 +267,7 @@ app.post("/broadcast", async (req, res) => {
     let totalBlocked = 0;
     let totalDeactivated = 0;
     let totalNotFound = 0;
+    let finalErrorSamples = [];
     
     let nextUsersPromise = fetchUsers(page);
     // 🟢 IMMEDIATE FEEDBACK
@@ -293,6 +299,7 @@ app.post("/broadcast", async (req, res) => {
         totalBlocked += result.blocked;
         totalDeactivated += result.deactivated;
         totalNotFound += result.not_found;
+        if (finalErrorSamples.length < 5) finalErrorSamples.push(...result.error_samples);
 
       console.log(`📊 [ID:${bId}] Progress: ${totalSuccess + totalFailed}/${bTotal} (S:${totalSuccess} F:${totalFailed})`);
     }
@@ -300,14 +307,16 @@ app.post("/broadcast", async (req, res) => {
     await workerApi.patch(`/api/broadcasts/${bId}/finish`);
 
     // 🏁 FINAL DETAILED SUMMARY
+    let sampleText = finalErrorSamples.slice(0, 5).join("\n");
     await notifyBot(admin_id, status_msg_id,
       `🏁 **Broadcast [ID:${bId}] Fully Completed!**\n\n` +
-      `✅ **Successfully Sent**: \`${totalSuccess}\`\n` +
-      `🚫 **Blocked by User**: \`${totalBlocked}\`\n` +
-      `🗑️ **Account Deactivated**: \`${totalDeactivated}\`\n` +
-      `❓ **Never Started Bot**: \`${totalNotFound}\`\n` +
-      `❌ **Total Failures**: \`${totalFailed}\` (Logged)\n\n` +
-      `📈 **Total Audience Cleaned**: \`${bTotal}\``
+      `✅ **Successful**: \`${totalSuccess}\`\n` +
+      `🚫 **Blocked**: \`${totalBlocked}\`\n` +
+      `🗑️ **Deactivated**: \`${totalDeactivated}\`\n` +
+      `❓ **Never Started**: \`${totalNotFound}\`\n` +
+      `❌ **Total Failures**: \`${totalFailed}\`\n\n` +
+      `⚠️ **Failure Samples:**\n${sampleText || "None"}\n\n` +
+      `📈 **Total Audience**: \`${bTotal}\``
     );
     console.log(`🏁 [ID:${bId}] Broadcast completed. S:${totalSuccess} F:${totalFailed}`);
 
