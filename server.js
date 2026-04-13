@@ -17,9 +17,9 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY || "YOUR_ADMIN_API_KEY";
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
 // STABILITY SETTINGS
-const CONCURRENCY = 15;
-const RETRY_DELAY = 1000;
-const UPDATE_EVERY = 25;
+const CONCURRENCY = 10;
+const RETRY_DELAY = 1500;
+const UPDATE_EVERY = 20;
 
 // GLOBAL RATE SYNC
 let globalPauseUntil = 0;
@@ -81,6 +81,7 @@ async function fetchUsers(page, pageSize = 1000) {
 // 🔥 SAFE SEND WITH RETRY & 429 HANDLING
 async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
   await checkRateLimit();
+  await wait(40); // 40ms mini-delay for constant smooth flow (~25 req/sec)
 
   try {
     await axios.post(`${TELEGRAM_API}/copyMessage`, {
@@ -91,34 +92,31 @@ async function safeSend(chat_id, from_chat_id, message_id, attempt = 1) {
     return { status: "success" };
   } catch (e) {
     const description = e.response?.data?.description || e.message;
-    const isRateLimited = e.response?.status === 429;
+    const status = e.response?.status;
+    const isRateLimited = status === 429;
 
     // Comprehensive "Dead User" detection
-    const deadUserDescriptions = [
-      "blocked",
-      "chat not found",
-      "can't initiate conversation",
-      "user is deactivated"
-    ];
-    const isDeadUser = deadUserDescriptions.some(desc => description.toLowerCase().includes(desc));
+    const deadUserKeywords = ["blocked", "chat not found", "can't initiate", "deactivated", "deleted"];
+    const isDeadUser = [400, 403].includes(status) && deadUserKeywords.some(desc => description.toLowerCase().includes(desc));
 
     if (isRateLimited) {
       const waitTime = (e.response.data.parameters?.retry_after || 5) * 1000;
-      globalPauseUntil = Date.now() + waitTime + 500;
+      globalPauseUntil = Date.now() + waitTime + 1000;
       console.warn(`[429] Rate limit hit. Global pause for ${waitTime}ms.`);
-      await wait(waitTime + 500);
-      // Max 5 rate-limit retries to avoid infinite recursion
+      await wait(waitTime + 1000);
       if (attempt < 5) return safeSend(chat_id, from_chat_id, message_id, attempt + 1);
       return { status: "failed", error: "Rate limited too many times" };
     }
 
     if (isDeadUser) {
+      console.log(`\x1b[31m[DEAD USER]\x1b[0m ID: ${chat_id} | Reason: ${description} | Type: ${typeof chat_id}`);
+      
       workerApi.post("/api/users/block", { user_id: chat_id, reason: `Dead user: ${description}` }).catch(() => { });
       
       let type = "failed";
       if (description.toLowerCase().includes("blocked")) type = "blocked";
-      if (description.toLowerCase().includes("deactivated")) type = "deactivated";
-      if (description.toLowerCase().includes("chat not found") || description.toLowerCase().includes("initiate")) type = "not_found";
+      else if (description.toLowerCase().includes("deactivated") || description.toLowerCase().includes("deleted")) type = "deactivated";
+      else type = "not_found"; 
       
       return { status: "failed", type, error: description };
     }
@@ -168,9 +166,10 @@ async function processBatch(users, broadcastId, fromChatId, messageId, bTotal, a
           `${progressBar}\n\n` +
           `✅ **Successful**: \`${s}\`\n` +
           `🚫 **Blocked**: \`${b}\`\n` +
-          `🗑️ **Inactive/Deactivated**: \`${d + n}\`\n` +
+          `🗑️ **Deactivated**: \`${d}\`\n` +
+          `❓ **Not Found**: \`${n}\`\n` +
           `🏁 **Processed**: \`${totalProcessed} / ${bTotal}\`\n\n` +
-          `_Speed: 15 threads / 30s timeout active_`
+          `_Speed controlled: 10 threads + 40ms delay_`
         );
       }
     } catch (e) {
@@ -305,7 +304,8 @@ app.post("/broadcast", async (req, res) => {
       `🏁 **Broadcast [ID:${bId}] Fully Completed!**\n\n` +
       `✅ **Successfully Sent**: \`${totalSuccess}\`\n` +
       `🚫 **Blocked by User**: \`${totalBlocked}\`\n` +
-      `🗑️ **Deleted/Deactivated**: \`${totalDeactivated + totalNotFound}\`\n` +
+      `🗑️ **Account Deactivated**: \`${totalDeactivated}\`\n` +
+      `❓ **Never Started Bot**: \`${totalNotFound}\`\n` +
       `❌ **Total Failures**: \`${totalFailed}\` (Logged)\n\n` +
       `📈 **Total Audience Cleaned**: \`${bTotal}\``
     );
