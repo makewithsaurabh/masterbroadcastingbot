@@ -5,7 +5,7 @@ const pLimit = require("p-limit");
 
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: false })); // Block all cross-origin requests (API-only server)
+app.use(cors()); // Allow requests from any origin for the dashboard
 
 // NETWORK SAFETY
 axios.defaults.timeout = 30000; // 30s global timeout for slow Telegram responses
@@ -382,16 +382,25 @@ app.get("/api/media/:file_id", async (req, res) => {
 
 app.get("/api/dashboard/stats", async (req, res) => {
   try {
+    console.log("Dashboard: Fetching fresh stats...");
     const [broadcasts, users] = await Promise.all([
-      workerApi.get("/api/broadcasts"),
-      workerApi.get("/api/users?limit=1")
+      workerApi.get("/api/broadcasts").catch(err => {
+          console.warn("Dashboard Warn: Could not fetch broadcasts from worker:", err.message);
+          return { data: [] };
+      }),
+      workerApi.get("/api/users?limit=1").catch(err => {
+          console.warn("Dashboard Warn: Could not fetch user count from worker:", err.message);
+          return { headers: {} };
+      })
     ]);
+
     res.json({
-      broadcasts: broadcasts.data,
-      total_users: parseInt(users.headers['x-total-count'] || '0', 10) // Parse as integer, headers are strings
+      broadcasts: broadcasts.data || [],
+      total_users: parseInt(users.headers['x-total-count'] || '0', 10)
     });
   } catch (e) {
-    res.status(500).json({ error: "Dashboard down" });
+    console.error("Dashboard Critical Error:", e);
+    res.status(500).json({ error: "Dashboard sync failed" });
   }
 });
 
